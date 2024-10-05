@@ -1,5 +1,4 @@
 /*
-
  */
 package main
 
@@ -47,6 +46,7 @@ var config configData
 var netfile string
 
 func main() {
+	log.SetOutput(os.Stdout)
 
 	var j bool
 
