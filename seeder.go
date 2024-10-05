@@ -19,10 +19,10 @@ const (
 	minPort = 0
 	maxPort = 65535
 
-	crawlDelay = 22 // seconds between start crawlwer ticks
-	auditDelay = 22 // minutes between audit channel ticks
-	dnsDelay   = 29 // seconds between updates to active dns record list
-	ngPurgeDelay = 5 // minutes between partial NG purges
+	crawlDelay   = 22 // seconds between start crawlwer ticks
+	auditDelay   = 22 // minutes between audit channel ticks
+	dnsDelay     = 29 // seconds between updates to active dns record list
+	ngPurgeDelay = 5  // minutes between partial NG purges
 
 	maxFails = 58 // max number of connect fails before we delete a node. Just over 24 hours(checked every 33 minutes)
 
@@ -48,21 +48,21 @@ const (
 )
 
 type dnsseeder struct {
-	id        wire.BitcoinNet  // Magic number - Unique ID for this network. Sent in header of all messages
-	theList   map[string]*node // the list of current nodes
-	mtx       sync.RWMutex     // protect thelist
-	dnsHost   string           // dns host we will serve results for this domain
-	name      string           // Short name for the network
-	desc      string           // Long description for the network
-	initialIP string           // Initial ip address to connect to and ask for addresses if we have no seeders
-	seeders   []string         // slice of seeders to pull ip addresses when starting this seeder
-	maxStart  []uint32         // max number of goroutines to start each run for each status type
-	delay     []int64          // number of seconds to wait before we connect to a known client for each status
-	counts    NodeCounts       // structure to hold stats for this seeder
-	pver      uint32           // minimum block height for the seeder
-	ttl       uint32           // DNS TTL to use for this seeder
-	maxSize   uint32              // max number of clients before we start restricting new entries
-	port      uint16           // default network port this seeder uses
+	id         wire.BitcoinNet  // Magic number - Unique ID for this network. Sent in header of all messages
+	theList    map[string]*node // the list of current nodes
+	mtx        sync.RWMutex     // protect thelist
+	dnsHost    string           // dns host we will serve results for this domain
+	name       string           // Short name for the network
+	desc       string           // Long description for the network
+	initialIPs []string         // Initial ip addresses to connect to and ask for addresses if we have no seeders
+	seeders    []string         // slice of seeders to pull ip addresses when starting this seeder
+	maxStart   []uint32         // max number of goroutines to start each run for each status type
+	delay      []int64          // number of seconds to wait before we connect to a known client for each status
+	counts     NodeCounts       // structure to hold stats for this seeder
+	pver       uint32           // minimum block height for the seeder
+	ttl        uint32           // DNS TTL to use for this seeder
+	maxSize    int              // max number of clients before we start restricting new entries
+	port       uint16           // default network port this seeder uses
 }
 
 type result struct {
@@ -106,12 +106,14 @@ func (s *dnsseeder) initSeeder() {
 		}
 	}
 
-	// load one ip address into system and start crawling from it
-	if len(s.theList) == 0 && s.initialIP != "" {
-		if newIP := net.ParseIP(s.initialIP); newIP != nil {
-			// 1 at the end is the services flag
-			if x := s.addNa(wire.NewNetAddressIPPort(newIP, s.port, 1)); x == true {
-				log.Printf("%s: crawling with initial IP %s \n", s.name, s.initialIP)
+	// load ip addresses into system and start crawling from them
+	if len(s.theList) == 0 && len(s.initialIPs) > 0 {
+		for _, initialIP := range s.initialIPs {
+			if newIP := net.ParseIP(initialIP); newIP != nil {
+				// 1 at the end is the services flag
+				if x := s.addNa(wire.NewNetAddressIPPort(newIP, s.port, 1)); x == true {
+					log.Printf("%s: crawling with initial IP %s \n", s.name, initialIP)
+				}
 			}
 		}
 	}
@@ -121,7 +123,9 @@ func (s *dnsseeder) initSeeder() {
 		for _, v := range s.seeders {
 			log.Printf("%s: Seeder: %s\n", s.name, v)
 		}
-		log.Printf("%s: Initial IP: %s\n", s.name, s.initialIP)
+		for _, v := range s.initialIPs {
+			log.Printf("%s: Initial IP: %s\n", s.name, v)
+		}
 	}
 }
 
@@ -522,7 +526,7 @@ func (s *dnsseeder) purgeNg() {
 		return
 	}
 
-	pruneGoal := int(float64(s.counts.NdStatus[statusNG])*0.25) // 25% of all NG nodes
+	pruneGoal := int(float64(s.counts.NdStatus[statusNG]) * 0.25) // 25% of all NG nodes
 	c := 0
 
 	for k, nd := range s.theList {
