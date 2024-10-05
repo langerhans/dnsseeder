@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2015 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -10,9 +10,10 @@ import (
 	"strings"
 )
 
+// XXX pedro: we will probably need to bump this.
 const (
 	// ProtocolVersion is the latest protocol version this package supports.
-	ProtocolVersion uint32 = 70002
+	ProtocolVersion uint32 = 70016
 
 	// MultipleAddressVersion is the protocol version which added multiple
 	// addresses per message (pver >= MultipleAddressVersion).
@@ -38,6 +39,31 @@ const (
 	// RejectVersion is the protocol version which added a new reject
 	// message.
 	RejectVersion uint32 = 70002
+
+	// BIP0111Version is the protocol version which added the SFNodeBloom
+	// service flag.
+	BIP0111Version uint32 = 70011
+
+	// SendHeadersVersion is the protocol version which added a new
+	// sendheaders message.
+	SendHeadersVersion uint32 = 70012
+
+	// FeeFilterVersion is the protocol version which added a new
+	// feefilter message.
+	FeeFilterVersion uint32 = 70013
+
+	// AddrV2Version is the protocol version which added two new messages.
+	// sendaddrv2 is sent during the version-verack handshake and signals
+	// support for sending and receiving the addrv2 message. In the future,
+	// new messages that occur during the version-verack handshake will not
+	// come with a protocol version bump.
+	AddrV2Version uint32 = 70016
+)
+
+const (
+	// NodeNetworkLimitedBlockThreshold is the number of blocks that a node
+	// broadcasting SFNodeNetworkLimited MUST be able to serve from the tip.
+	NodeNetworkLimitedBlockThreshold = 288
 )
 
 // ServiceFlag identifies services supported by a bitcoin peer.
@@ -46,11 +72,69 @@ type ServiceFlag uint64
 const (
 	// SFNodeNetwork is a flag used to indicate a peer is a full node.
 	SFNodeNetwork ServiceFlag = 1 << iota
+
+	// SFNodeGetUTXO is a flag used to indicate a peer supports the
+	// getutxos and utxos commands (BIP0064).
+	SFNodeGetUTXO
+
+	// SFNodeBloom is a flag used to indicate a peer supports bloom
+	// filtering.
+	SFNodeBloom
+
+	// SFNodeWitness is a flag used to indicate a peer supports blocks
+	// and transactions including witness data (BIP0144).
+	SFNodeWitness
+
+	// SFNodeXthin is a flag used to indicate a peer supports xthin blocks.
+	SFNodeXthin
+
+	// SFNodeBit5 is a flag used to indicate a peer supports a service
+	// defined by bit 5.
+	SFNodeBit5
+
+	// SFNodeCF is a flag used to indicate a peer supports committed
+	// filters (CFs).
+	SFNodeCF
+
+	// SFNode2X is a flag used to indicate a peer is running the Segwit2X
+	// software.
+	SFNode2X
+
+	// SFNodeNetWorkLimited is a flag used to indicate a peer supports serving
+	// the last 288 blocks.
+	SFNodeNetworkLimited = 1 << 10
 )
 
 // Map of service flags back to their constant names for pretty printing.
 var sfStrings = map[ServiceFlag]string{
-	SFNodeNetwork: "SFNodeNetwork",
+	SFNodeNetwork:        "SFNodeNetwork",
+	SFNodeGetUTXO:        "SFNodeGetUTXO",
+	SFNodeBloom:          "SFNodeBloom",
+	SFNodeWitness:        "SFNodeWitness",
+	SFNodeXthin:          "SFNodeXthin",
+	SFNodeBit5:           "SFNodeBit5",
+	SFNodeCF:             "SFNodeCF",
+	SFNode2X:             "SFNode2X",
+	SFNodeNetworkLimited: "SFNodeNetworkLimited",
+}
+
+// orderedSFStrings is an ordered list of service flags from highest to
+// lowest.
+var orderedSFStrings = []ServiceFlag{
+	SFNodeNetwork,
+	SFNodeGetUTXO,
+	SFNodeBloom,
+	SFNodeWitness,
+	SFNodeXthin,
+	SFNodeBit5,
+	SFNodeCF,
+	SFNode2X,
+	SFNodeNetworkLimited,
+}
+
+// HasFlag returns a bool indicating if the service has the given flag.
+func (f ServiceFlag) HasFlag(s ServiceFlag) bool {
+	return f&s == s
 }
 
 // String returns the ServiceFlag in human-readable form.
@@ -62,9 +146,9 @@ func (f ServiceFlag) String() string {
 
 	// Add individual bit flags.
 	s := ""
-	for flag, name := range sfStrings {
+	for _, flag := range orderedSFStrings {
 		if f&flag == flag {
-			s += name + "|"
+			s += sfStrings[flag] + "|"
 			f -= flag
 		}
 	}

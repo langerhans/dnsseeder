@@ -45,8 +45,11 @@ func (msg *MsgInv) AddInvVect(iv *InvVect) error {
 
 // BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
-func (msg *MsgInv) BtcDecode(r io.Reader, pver uint32) error {
-	count, err := readVarInt(r, pver)
+func (msg *MsgInv) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	count, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
@@ -57,14 +60,17 @@ func (msg *MsgInv) BtcDecode(r io.Reader, pver uint32) error {
 		return messageError("MsgInv.BtcDecode", str)
 	}
 
+	// Create a contiguous slice of inventory vectors to deserialize into in
+	// order to reduce the number of allocations.
+	invList := make([]InvVect, count)
 	msg.InvList = make([]*InvVect, 0, count)
 	for i := uint64(0); i < count; i++ {
-		iv := InvVect{}
-		err := readInvVect(r, pver, &iv)
+		iv := &invList[i]
+		err := readInvVectBuf(r, pver, iv, buf)
 		if err != nil {
 			return err
 		}
-		msg.AddInvVect(&iv)
+		msg.AddInvVect(iv)
 	}
 
 	return nil
@@ -72,7 +78,7 @@ func (msg *MsgInv) BtcDecode(r io.Reader, pver uint32) error {
 
 // BtcEncode encodes the receiver to w using the bitcoin protocol encoding.
 // This is part of the Message interface implementation.
-func (msg *MsgInv) BtcEncode(w io.Writer, pver uint32) error {
+func (msg *MsgInv) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
 	// Limit to max inventory vectors per message.
 	count := len(msg.InvList)
 	if count > MaxInvPerMsg {
@@ -80,13 +86,16 @@ func (msg *MsgInv) BtcEncode(w io.Writer, pver uint32) error {
 		return messageError("MsgInv.BtcEncode", str)
 	}
 
-	err := writeVarInt(w, pver, uint64(count))
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := WriteVarIntBuf(w, pver, uint64(count), buf)
 	if err != nil {
 		return err
 	}
 
 	for _, iv := range msg.InvList {
-		err := writeInvVect(w, pver, iv)
+		err := writeInvVectBuf(w, pver, iv, buf)
 		if err != nil {
 			return err
 		}

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2015 The btcsuite developers
+// Copyright (c) 2014-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -7,6 +7,8 @@ package wire
 import (
 	"fmt"
 	"io"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
 // RejectCode represents a numeric value by which a remote peer indicates
@@ -66,12 +68,12 @@ type MsgReject struct {
 
 	// Hash identifies a specific block or transaction that was rejected
 	// and therefore only applies the MsgBlock and MsgTx messages.
-	Hash ShaHash
+	Hash chainhash.Hash
 }
 
 // BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
-func (msg *MsgReject) BtcDecode(r io.Reader, pver uint32) error {
+func (msg *MsgReject) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
 	if pver < RejectVersion {
 		str := fmt.Sprintf("reject message invalid for protocol "+
 			"version %d", pver)
@@ -79,21 +81,24 @@ func (msg *MsgReject) BtcDecode(r io.Reader, pver uint32) error {
 	}
 
 	// Command that was rejected.
-	cmd, err := readVarString(r, pver)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	cmd, err := readVarStringBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
 	msg.Cmd = cmd
 
 	// Code indicating why the command was rejected.
-	err = readElement(r, &msg.Code)
-	if err != nil {
+	if _, err := io.ReadFull(r, buf[:1]); err != nil {
 		return err
 	}
+	msg.Code = RejectCode(buf[0])
 
 	// Human readable string with specific details (over and above the
 	// reject code above) about why the command was rejected.
-	reason, err := readVarString(r, pver)
+	reason, err := readVarStringBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
@@ -102,7 +107,7 @@ func (msg *MsgReject) BtcDecode(r io.Reader, pver uint32) error {
 	// CmdBlock and CmdTx messages have an additional hash field that
 	// identifies the specific block or transaction.
 	if msg.Cmd == CmdBlock || msg.Cmd == CmdTx {
-		err := readElement(r, &msg.Hash)
+		_, err := io.ReadFull(r, msg.Hash[:])
 		if err != nil {
 			return err
 		}
@@ -113,7 +118,7 @@ func (msg *MsgReject) BtcDecode(r io.Reader, pver uint32) error {
 
 // BtcEncode encodes the receiver to w using the bitcoin protocol encoding.
 // This is part of the Message interface implementation.
-func (msg *MsgReject) BtcEncode(w io.Writer, pver uint32) error {
+func (msg *MsgReject) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
 	if pver < RejectVersion {
 		str := fmt.Sprintf("reject message invalid for protocol "+
 			"version %d", pver)
@@ -121,20 +126,23 @@ func (msg *MsgReject) BtcEncode(w io.Writer, pver uint32) error {
 	}
 
 	// Command that was rejected.
-	err := writeVarString(w, pver, msg.Cmd)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := writeVarStringBuf(w, pver, msg.Cmd, buf)
 	if err != nil {
 		return err
 	}
 
 	// Code indicating why the command was rejected.
-	err = writeElement(w, msg.Code)
-	if err != nil {
+	buf[0] = byte(msg.Code)
+	if _, err := w.Write(buf[:1]); err != nil {
 		return err
 	}
 
 	// Human readable string with specific details (over and above the
 	// reject code above) about why the command was rejected.
-	err = writeVarString(w, pver, msg.Reason)
+	err = writeVarStringBuf(w, pver, msg.Reason, buf)
 	if err != nil {
 		return err
 	}
@@ -142,7 +150,7 @@ func (msg *MsgReject) BtcEncode(w io.Writer, pver uint32) error {
 	// CmdBlock and CmdTx messages have an additional hash field that
 	// identifies the specific block or transaction.
 	if msg.Cmd == CmdBlock || msg.Cmd == CmdTx {
-		err := writeElement(w, &msg.Hash)
+		_, err := w.Write(msg.Hash[:])
 		if err != nil {
 			return err
 		}

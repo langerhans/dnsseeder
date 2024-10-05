@@ -1,21 +1,20 @@
-// Copyright (c) 2013-2015 The btcsuite developers
+// Copyright (c) 2013-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 package wire
 
 import (
-	"bytes"
 	"io"
 	"time"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
-// BlockVersion is the current latest supported block version.
-const BlockVersion = 3
-
+// MaxBlockHeaderPayload is the maximum number of bytes a block header can be.
 // Version 4 bytes + Timestamp 4 bytes + Bits 4 bytes + Nonce 4 bytes +
 // PrevBlock and MerkleRoot hashes.
-const MaxBlockHeaderPayload = 16 + (HashSize * 2)
+const MaxBlockHeaderPayload = 16 + (chainhash.HashSize * 2)
 
 // BlockHeader defines information about a block and is used in the bitcoin
 // block (MsgBlock) and headers (MsgHeaders) messages.
@@ -23,11 +22,11 @@ type BlockHeader struct {
 	// Version of the block.  This is not the same as the protocol version.
 	Version int32
 
-	// Hash of the previous block in the block chain.
-	PrevBlock ShaHash
+	// Hash of the previous block header in the block chain.
+	PrevBlock chainhash.Hash
 
 	// Merkle tree reference to hash of all transactions for the block.
-	MerkleRoot ShaHash
+	MerkleRoot chainhash.Hash
 
 	// Time the block was created.  This is, unfortunately, encoded as a
 	// uint32 on the wire and therefore is limited to 2106.
@@ -44,23 +43,18 @@ type BlockHeader struct {
 // header.
 const blockHeaderLen = 80
 
-// BlockSha computes the block identifier hash for the given block header.
-func (h *BlockHeader) BlockSha() ShaHash {
-	// Encode the header and double sha256 everything prior to the number of
-	// transactions.  Ignore the error returns since there is no way the
-	// encode could fail except being out of memory which would cause a
-	// run-time panic.
-	var buf bytes.Buffer
-	_ = writeBlockHeader(&buf, 0, h)
-
-	return DoubleSha256SH(buf.Bytes())
+// BlockHash computes the block identifier hash for the given block header.
+func (h *BlockHeader) BlockHash() chainhash.Hash {
+	return chainhash.DoubleHashRaw(func(w io.Writer) error {
+		return writeBlockHeader(w, 0, h)
+	})
 }
 
 // BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
 // See Deserialize for decoding block headers stored to disk, such as in a
 // database, as opposed to decoding block headers from the wire.
-func (h *BlockHeader) BtcDecode(r io.Reader, pver uint32) error {
+func (h *BlockHeader) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
 	return readBlockHeader(r, pver, h)
 }
 
@@ -68,7 +62,7 @@ func (h *BlockHeader) BtcDecode(r io.Reader, pver uint32) error {
 // This is part of the Message interface implementation.
 // See Serialize for encoding block headers to be stored to disk, such as in a
 // database, as opposed to encoding block headers for the wire.
-func (h *BlockHeader) BtcEncode(w io.Writer, pver uint32) error {
+func (h *BlockHeader) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
 	return writeBlockHeader(w, pver, h)
 }
 
@@ -92,16 +86,16 @@ func (h *BlockHeader) Serialize(w io.Writer) error {
 	return writeBlockHeader(w, 0, h)
 }
 
-// NewBlockHeader returns a new BlockHeader using the provided previous block
-// hash, merkle root hash, difficulty bits, and nonce used to generate the
+// NewBlockHeader returns a new BlockHeader using the provided version, previous
+// block hash, merkle root hash, difficulty bits, and nonce used to generate the
 // block with defaults for the remaining fields.
-func NewBlockHeader(prevHash *ShaHash, merkleRootHash *ShaHash, bits uint32,
-	nonce uint32) *BlockHeader {
+func NewBlockHeader(version int32, prevHash, merkleRootHash *chainhash.Hash,
+	bits uint32, nonce uint32) *BlockHeader {
 
 	// Limit the timestamp to one second precision since the protocol
 	// doesn't support better.
 	return &BlockHeader{
-		Version:    BlockVersion,
+		Version:    version,
 		PrevBlock:  *prevHash,
 		MerkleRoot: *merkleRootHash,
 		Timestamp:  time.Unix(time.Now().Unix(), 0),
@@ -113,14 +107,54 @@ func NewBlockHeader(prevHash *ShaHash, merkleRootHash *ShaHash, bits uint32,
 // readBlockHeader reads a bitcoin block header from r.  See Deserialize for
 // decoding block headers stored to disk, such as in a database, as opposed to
 // decoding from the wire.
+//
+// DEPRECATED: Use readBlockHeaderBuf instead.
 func readBlockHeader(r io.Reader, pver uint32, bh *BlockHeader) error {
-	var sec uint32
-	err := readElements(r, &bh.Version, &bh.PrevBlock, &bh.MerkleRoot, &sec,
-		&bh.Bits, &bh.Nonce)
-	if err != nil {
+	buf := binarySerializer.Borrow()
+	err := readBlockHeaderBuf(r, pver, bh, buf)
+	binarySerializer.Return(buf)
+	return err
+}
+
+// readBlockHeaderBuf reads a bitcoin block header from r.  See Deserialize for
+// decoding block headers stored to disk, such as in a database, as opposed to
+// decoding from the wire.
+//
+// If b is non-nil, the provided buffer will be used for serializing small
+// values.  Otherwise a buffer will be drawn from the binarySerializer's pool
+// and return when the method finishes.
+//
+// NOTE: b MUST either be nil or at least an 8-byte slice.
+func readBlockHeaderBuf(r io.Reader, pver uint32, bh *BlockHeader,
+	buf []byte) error {
+
+	if _, err := io.ReadFull(r, buf[:4]); err != nil {
 		return err
 	}
-	bh.Timestamp = time.Unix(int64(sec), 0)
+	bh.Version = int32(littleEndian.Uint32(buf[:4]))
+
+	if _, err := io.ReadFull(r, bh.PrevBlock[:]); err != nil {
+		return err
+	}
+
+	if _, err := io.ReadFull(r, bh.MerkleRoot[:]); err != nil {
+		return err
+	}
+
+	if _, err := io.ReadFull(r, buf[:4]); err != nil {
+		return err
+	}
+	bh.Timestamp = time.Unix(int64(littleEndian.Uint32(buf[:4])), 0)
+
+	if _, err := io.ReadFull(r, buf[:4]); err != nil {
+		return err
+	}
+	bh.Bits = littleEndian.Uint32(buf[:4])
+
+	if _, err := io.ReadFull(r, buf[:4]); err != nil {
+		return err
+	}
+	bh.Nonce = littleEndian.Uint32(buf[:4])
 
 	return nil
 }
@@ -128,11 +162,52 @@ func readBlockHeader(r io.Reader, pver uint32, bh *BlockHeader) error {
 // writeBlockHeader writes a bitcoin block header to w.  See Serialize for
 // encoding block headers to be stored to disk, such as in a database, as
 // opposed to encoding for the wire.
+//
+// DEPRECATED: Use writeBlockHeaderBuf instead.
 func writeBlockHeader(w io.Writer, pver uint32, bh *BlockHeader) error {
-	sec := uint32(bh.Timestamp.Unix())
-	err := writeElements(w, bh.Version, &bh.PrevBlock, &bh.MerkleRoot,
-		sec, bh.Bits, bh.Nonce)
-	if err != nil {
+	buf := binarySerializer.Borrow()
+	err := writeBlockHeaderBuf(w, pver, bh, buf)
+	binarySerializer.Return(buf)
+	return err
+}
+
+// writeBlockHeaderBuf writes a bitcoin block header to w.  See Serialize for
+// encoding block headers to be stored to disk, such as in a database, as
+// opposed to encoding for the wire.
+//
+// If b is non-nil, the provided buffer will be used for serializing small
+// values.  Otherwise a buffer will be drawn from the binarySerializer's pool
+// and return when the method finishes.
+//
+// NOTE: b MUST either be nil or at least an 8-byte slice.
+func writeBlockHeaderBuf(w io.Writer, pver uint32, bh *BlockHeader,
+	buf []byte) error {
+
+	littleEndian.PutUint32(buf[:4], uint32(bh.Version))
+	if _, err := w.Write(buf[:4]); err != nil {
+		return err
+	}
+
+	if _, err := w.Write(bh.PrevBlock[:]); err != nil {
+		return err
+	}
+
+	if _, err := w.Write(bh.MerkleRoot[:]); err != nil {
+		return err
+	}
+
+	littleEndian.PutUint32(buf[:4], uint32(bh.Timestamp.Unix()))
+	if _, err := w.Write(buf[:4]); err != nil {
+		return err
+	}
+
+	littleEndian.PutUint32(buf[:4], bh.Bits)
+	if _, err := w.Write(buf[:4]); err != nil {
+		return err
+	}
+
+	littleEndian.PutUint32(buf[:4], bh.Nonce)
+	if _, err := w.Write(buf[:4]); err != nil {
 		return err
 	}
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2015 The btcsuite developers
+// Copyright (c) 2014-2016 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -7,6 +7,8 @@ package wire
 import (
 	"fmt"
 	"io"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
 // maxFlagsPerMerkleBlock is the maximum number of flag bytes that could
@@ -22,12 +24,12 @@ const maxFlagsPerMerkleBlock = maxTxPerBlock / 8
 type MsgMerkleBlock struct {
 	Header       BlockHeader
 	Transactions uint32
-	Hashes       []*ShaHash
+	Hashes       []*chainhash.Hash
 	Flags        []byte
 }
 
 // AddTxHash adds a new transaction hash to the message.
-func (msg *MsgMerkleBlock) AddTxHash(hash *ShaHash) error {
+func (msg *MsgMerkleBlock) AddTxHash(hash *chainhash.Hash) error {
 	if len(msg.Hashes)+1 > maxTxPerBlock {
 		str := fmt.Sprintf("too many tx hashes for message [max %v]",
 			maxTxPerBlock)
@@ -40,25 +42,28 @@ func (msg *MsgMerkleBlock) AddTxHash(hash *ShaHash) error {
 
 // BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
-func (msg *MsgMerkleBlock) BtcDecode(r io.Reader, pver uint32) error {
+func (msg *MsgMerkleBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
 	if pver < BIP0037Version {
 		str := fmt.Sprintf("merkleblock message invalid for protocol "+
 			"version %d", pver)
 		return messageError("MsgMerkleBlock.BtcDecode", str)
 	}
 
-	err := readBlockHeader(r, pver, &msg.Header)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := readBlockHeaderBuf(r, pver, &msg.Header, buf)
 	if err != nil {
 		return err
 	}
 
-	err = readElement(r, &msg.Transactions)
-	if err != nil {
+	if _, err := io.ReadFull(r, buf[:4]); err != nil {
 		return err
 	}
+	msg.Transactions = littleEndian.Uint32(buf[:4])
 
 	// Read num block locator hashes and limit to max.
-	count, err := readVarInt(r, pver)
+	count, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
@@ -68,28 +73,27 @@ func (msg *MsgMerkleBlock) BtcDecode(r io.Reader, pver uint32) error {
 		return messageError("MsgMerkleBlock.BtcDecode", str)
 	}
 
-	msg.Hashes = make([]*ShaHash, 0, count)
+	// Create a contiguous slice of hashes to deserialize into in order to
+	// reduce the number of allocations.
+	hashes := make([]chainhash.Hash, count)
+	msg.Hashes = make([]*chainhash.Hash, 0, count)
 	for i := uint64(0); i < count; i++ {
-		var sha ShaHash
-		err := readElement(r, &sha)
+		hash := &hashes[i]
+		_, err := io.ReadFull(r, hash[:])
 		if err != nil {
 			return err
 		}
-		msg.AddTxHash(&sha)
+		msg.AddTxHash(hash)
 	}
 
-	msg.Flags, err = readVarBytes(r, pver, maxFlagsPerMerkleBlock,
+	msg.Flags, err = ReadVarBytesBuf(r, pver, buf, maxFlagsPerMerkleBlock,
 		"merkle block flags size")
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // BtcEncode encodes the receiver to w using the bitcoin protocol encoding.
 // This is part of the Message interface implementation.
-func (msg *MsgMerkleBlock) BtcEncode(w io.Writer, pver uint32) error {
+func (msg *MsgMerkleBlock) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
 	if pver < BIP0037Version {
 		str := fmt.Sprintf("merkleblock message invalid for protocol "+
 			"version %d", pver)
@@ -110,33 +114,32 @@ func (msg *MsgMerkleBlock) BtcEncode(w io.Writer, pver uint32) error {
 		return messageError("MsgMerkleBlock.BtcDecode", str)
 	}
 
-	err := writeBlockHeader(w, pver, &msg.Header)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := writeBlockHeaderBuf(w, pver, &msg.Header, buf)
 	if err != nil {
 		return err
 	}
 
-	err = writeElement(w, msg.Transactions)
-	if err != nil {
+	littleEndian.PutUint32(buf[:4], msg.Transactions)
+	if _, err := w.Write(buf[:4]); err != nil {
 		return err
 	}
 
-	err = writeVarInt(w, pver, uint64(numHashes))
+	err = WriteVarIntBuf(w, pver, uint64(numHashes), buf)
 	if err != nil {
 		return err
 	}
 	for _, hash := range msg.Hashes {
-		err = writeElement(w, hash)
+		_, err := w.Write(hash[:])
 		if err != nil {
 			return err
 		}
 	}
 
-	err = writeVarBytes(w, pver, msg.Flags)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	err = WriteVarBytesBuf(w, pver, msg.Flags, buf)
+	return err
 }
 
 // Command returns the protocol command string for the message.  This is part
@@ -157,7 +160,7 @@ func NewMsgMerkleBlock(bh *BlockHeader) *MsgMerkleBlock {
 	return &MsgMerkleBlock{
 		Header:       *bh,
 		Transactions: 0,
-		Hashes:       make([]*ShaHash, 0),
+		Hashes:       make([]*chainhash.Hash, 0),
 		Flags:        make([]byte, 0),
 	}
 }
