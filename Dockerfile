@@ -2,8 +2,8 @@ FROM alpine:3
 
 WORKDIR /app
 
-ADD --chmod=755 dnsseeder .
-ADD configs/dogecoin.json .
+COPY --chmod=755 dnsseeder dnsseeder
+COPY configs/dogecoin.json dogecoin.json
 
 EXPOSE 53:53
 EXPOSE 8053:8053
