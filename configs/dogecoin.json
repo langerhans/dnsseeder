@@ -1,10 +1,12 @@
 {
- "Name": "Dogecoin",
- "Desc": "Dogecoin Main Net",
- "Id": "0xc0c0c0c0",
- "Port": 22556,
- "Pver": 70015,
- "DNSName": "seed.multidoge.org",
- "TTL": 600,
- "Seeder1": "seed2.multidoge.org"
+    "Name": "Dogecoin",
+    "Desc": "Dogecoin Main Net",
+    "Id": "0xc0c0c0c0",
+    "Port": 22556,
+    "Pver": 70015,
+    "DNSName": "seed.multidoge.org",
+    "TTL": 600,
+    "Seeders": [
+        "seed2.multidoge.org"
+    ]
 }

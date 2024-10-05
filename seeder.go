@@ -61,7 +61,7 @@ type dnsseeder struct {
 	counts     NodeCounts       // structure to hold stats for this seeder
 	pver       uint32           // minimum block height for the seeder
 	ttl        uint32           // DNS TTL to use for this seeder
-	maxSize    int              // max number of clients before we start restricting new entries
+	maxSize    uint32           // max number of clients before we start restricting new entries
 	port       uint16           // default network port this seeder uses
 }
 
