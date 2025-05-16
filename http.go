@@ -23,7 +23,7 @@ func startHTTP(port string) {
 	http.HandleFunc("/seeds.txt", txtHandler)
 	http.HandleFunc("/", emptyHandler)
 	// listen only on localhost
-	err := http.ListenAndServe("127.0.0.1:"+port, nil)
+	err := http.ListenAndServe("0.0.0.0:"+port, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
@@ -538,7 +538,7 @@ func txtHandler(w http.ResponseWriter, r *http.Request) {
 		lastSuccess := v.lastConnect
 
 		// Alas we don't actually measure this, so fake it.
-		uptime := (100.0 - float32(v.rating)) / 2.0 + 50.0
+		uptime := (100.0-float32(v.rating))/2.0 + 50.0
 
 		blocks := v.lastBlock
 
