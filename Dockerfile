@@ -1,8 +1,10 @@
 FROM alpine:3
 
+ARG TARGETARCH
+
 WORKDIR /app
 
-COPY --chmod=755 dnsseeder dnsseeder
+COPY --chmod=755 dnsseeder-${TARGETARCH} dnsseeder
 COPY configs/dogecoin.json dogecoin.json
 
 EXPOSE 53:53
